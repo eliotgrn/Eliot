@@ -225,6 +225,12 @@ h3{font-size:16px;font-weight:600}
 .clegend i,.epdot{width:9px;height:9px;border-radius:3px;flex:none;display:inline-block}
 @media (min-width:700px){.cday{min-height:92px;padding:7px}.cex{font-size:12px}}
 @media (max-width:420px){.cday{min-height:60px;padding:3px}.cex{font-size:9.5px}.cal{gap:3px}}
+.epchips{display:flex;flex-wrap:wrap;gap:6px}
+.epchip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--bg);border-radius:999px;padding:6px 11px;font-size:13px;font-weight:600;color:var(--ink)}
+.epchip i{width:9px;height:9px;border-radius:3px;background:var(--ec)}
+.epchip .mono{font-size:11px;color:var(--muted);font-weight:500}
+.epchip.on{border-color:var(--ec);background:color-mix(in srgb,var(--ec) 18%,var(--panel))}
+.epchip.on::after{content:"✓";color:var(--ec);font-weight:800}
 /* Barre d'onglets */
 .tabs{position:fixed;left:0;right:0;bottom:0;z-index:20;background:var(--panel);border-top:1px solid var(--line);padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-top:8px;padding-bottom:calc(8px + env(safe-area-inset-bottom,0px));display:flex;justify-content:center;gap:6px}
 .tabs a{flex:1;max-width:160px;text-align:center;text-decoration:none;color:var(--muted);font-weight:600;font-size:13px;padding:8px 6px;border-radius:12px}
@@ -430,7 +436,7 @@ function progHTML(cols,title,opt={}){
   const rows=ks.map(k=>{const bl=(state.days[k]||[]).filter(b=>cols.includes(b.col)).sort((a,b)=>toMin(a.start)-toMin(b.start));if(!bl.length)return"";const dd=parse(k);
     return `<div class="progday ${k<today?"past":""}"><div class="d">${JOURS[dd.getDay()]}<b>${dd.getDate()}</b>${MOIS[dd.getMonth()].slice(0,4)}.</div><div class="progitems">${bl.map(b=>{
       const logged=opt.log&&state.train.some(x=>x.from===k+"_"+b.id),canLog=opt.log&&k<=today&&!/repos/i.test(b.title);
-      return `<div class="progitem"><button class="pi" data-editat="${k}|${b.id}" style="border-left-color:${CV(b.col)}"><span class="mono muted">${b.start}–${b.end}</span> <b>${esc(b.title)}</b>${b.ep&&epName(b.ep)?` <span style="color:${epColor(b.ep)};font-weight:600">· ${esc(epName(b.ep))}</span>`:""}${b.done?' <span class="muted">✓</span>':""}</button>${canLog?(logged?`<span class="pill ok">Saisie</span>`:`<button class="btn" data-logplan="${k}|${b.id}">Saisir</button>`):""}</div>`}).join("")}</div></div>`}).join("");
+      return `<div class="progitem"><button class="pi" data-editat="${k}|${b.id}" style="border-left-color:${CV(b.col)}"><span class="mono muted">${b.start}–${b.end}</span> <b>${esc(b.title)}</b>${blockEps(b).filter(epName).map(id=>` <span style="color:${epColor(id)};font-weight:600">· ${esc(epName(id))}</span>`).join("")}${b.done?' <span class="muted">✓</span>':""}</button>${canLog?(logged?`<span class="pill ok">Saisie</span>`:`<button class="btn" data-logplan="${k}|${b.id}">Saisir</button>`):""}</div>`}).join("")}</div></div>`}).join("");
   return `<section class="ep prog"><div class="row" style="justify-content:space-between"><h3>${title}</h3><button class="btn" data-addprog="${cols[0]}">+ Créneau</button></div>${rows||`<p class="muted" style="margin:0;font-size:13.5px">${opt.empty||"Rien de prévu sur les 3 prochaines semaines."}</p>`}</section>`}
 document.addEventListener("click",e=>{
   const t=e.target.closest("button");if(!t)return;
@@ -875,7 +881,9 @@ const EPC=["#4F5BD5","#1E9E6A","#E08A00","#B03FC8","#E0456B","#0E8FA6","#8DAA00"
 function sortedEps(){return(state.rev.epreuves||[]).slice().sort((a,b)=>(a.date||"9999").localeCompare(b.date||"9999"))}
 function epColor(id){const i=sortedEps().findIndex(e=>e.id===id);return i<0?"var(--c-rev)":EPC[i%EPC.length]}
 function epName(id){return(state.rev.epreuves||[]).find(e=>e.id===id)?.name||""}
-function revHoursByEp(){const o={};Object.values(state.days).forEach(bl=>(bl||[]).forEach(b=>{if(b.col!=="rev"||!b.ep)return;o[b.ep]=o[b.ep]||{plan:0,done:0};o[b.ep].plan+=dur(b);if(b.done)o[b.ep].done+=dur(b)}));return o}
+function blockEps(b){return b.eps||(b.ep?[b.ep]:[])}
+// une séance partagée entre plusieurs épreuves répartit son temps à parts égales
+function revHoursByEp(){const o={};Object.values(state.days).forEach(bl=>(bl||[]).forEach(b=>{const es=blockEps(b);if(b.col!=="rev"||!es.length)return;const part=dur(b)/es.length;es.forEach(id=>{o[id]=o[id]||{plan:0,done:0};o[id].plan+=part;if(b.done)o[id].done+=part})}));Object.values(o).forEach(v=>{v.plan=Math.round(v.plan);v.done=Math.round(v.done)});return o}
 function revCalendarHTML(){
   const eps=sortedEps(),today=key(new Date());
   const ds=eps.map(e=>e.date).filter(Boolean).concat(state.rev.endDate?[state.rev.endDate]:[]).sort();
@@ -890,7 +898,7 @@ function revCalendarHTML(){
     cells+=`<button class="cday ${k<today?"past":""} ${k===today?"today":""} ${ex.length?"exam":""}" data-go="${k}" data-to="jour" ${ex.length?`style="--ec:${epColor(ex[0].id)}"`:""} aria-label="${x.getDate()} ${MOIS[x.getMonth()]}${ex.length?", "+ex.map(e=>e.name).join(", "):""}">
       <span class="cnum">${first?`<span class="cmon">${MOIS[x.getMonth()].slice(0,4)}.</span> `:""}${x.getDate()}${state.rev.endDate===k?' <span class="cend">Fin</span>':""}</span>
       ${ex.map(e=>`<span class="cex" style="color:${epColor(e.id)}">${esc(e.name)}</span>`).join("")}
-      ${rb.length?`<span class="cdots">${rb.map(b=>`<i style="background:${b.ep?epColor(b.ep):"var(--c-rev)"}" title="${esc(b.title)}"></i>`).join("")}</span><span class="chrs">${fmtH(mins)}</span>`:""}
+      ${rb.length?`<span class="cdots">${rb.map(b=>{const es=blockEps(b).filter(epName);return es.length?es.map(id=>`<i style="background:${epColor(id)}" title="${esc(b.title)} · ${esc(epName(id))}"></i>`).join(""):`<i style="background:var(--c-rev)" title="${esc(b.title)}"></i>`}).join("")}</span><span class="chrs">${fmtH(mins)}</span>`:""}
     </button>`;
   }
   const legend=eps.length?`<div class="clegend">${eps.map(e=>`<span><i style="background:${epColor(e.id)}"></i>${esc(e.name)}${e.date?` <span class="mono muted">${parse(e.date).getDate()}/${pad(parse(e.date).getMonth()+1)}</span>`:""}</span>`).join("")}</div>`:"";
@@ -940,7 +948,7 @@ function openSheet(b){
       <label class="lbl" for="b_title">Intitulé<input class="field" id="b_title" required value="${esc(b.title||"")}" placeholder="Ex. Fiches physio, Muscu haut du corps…"></label>
       <label class="lbl" for="b_date">Jour<input class="field" type="date" id="b_date" value="${b.date}" required></label>
       <div class="seg" role="radiogroup" aria-label="Colonne">${COLS.map(c=>`<button type="button" data-col="${c.k}" class="${c.k===col?"on":""}"><i style="background:${CV(c.k)}"></i>${c.n}</button>`).join("")}</div>
-      ${col==="rev"&&(state.rev.epreuves||[]).length?`<label class="lbl" for="b_ep">Pour l'épreuve<select class="field" id="b_ep"><option value="">Aucune en particulier</option>${sortedEps().map(e=>`<option value="${e.id}" ${e.id===b.ep?"selected":""}>${esc(e.name)}${e.date?" · "+parse(e.date).getDate()+"/"+pad(parse(e.date).getMonth()+1):""}</option>`).join("")}</select></label>`:""}
+      ${col==="rev"&&(state.rev.epreuves||[]).length?`<div class="lbl">Pour les épreuves <span style="font-weight:500">(plusieurs possibles)</span><div class="epchips">${sortedEps().map(e=>{const on=blockEps(b).includes(e.id);return `<button type="button" class="epchip ${on?"on":""}" data-epchip="${e.id}" aria-pressed="${on}" style="--ec:${epColor(e.id)}"><i></i>${esc(e.name)}${e.date?` <span class="mono">${parse(e.date).getDate()}/${pad(parse(e.date).getMonth()+1)}</span>`:""}</button>`}).join("")}</div></div>`:""}
       <div class="two"><label class="lbl" for="b_start">Début<input class="field mono" type="time" id="b_start" value="${b.start||"09:00"}" required></label><label class="lbl" for="b_end">Fin<input class="field mono" type="time" id="b_end" value="${b.end||"10:00"}" required></label></div>
       <label class="lbl" for="b_note">Note<textarea class="field" id="b_note" rows="2" placeholder="Lieu, objectif, chapitres…">${esc(b.note||"")}</textarea></label>
       ${isNew?"":`<label class="row" style="font-weight:600"><input type="checkbox" id="b_done" ${b.done?"checked":""} style="width:20px;height:20px"> Fait</label>`}
@@ -953,20 +961,21 @@ function openSheet(b){
     $("#scrim").onclick=e=>{if(e.target.id==="scrim")close()};
     f.querySelector("[data-close]").onclick=close;
     f.querySelectorAll("[data-col]").forEach(x=>x.onclick=()=>{col=x.dataset.col;keep();draw()});
+    f.querySelectorAll("[data-epchip]").forEach(x=>x.onclick=()=>{keep();const id=x.dataset.epchip,es=blockEps(b);b={...b,eps:es.includes(id)?es.filter(e=>e!==id):[...es,id]};delete b.ep;draw()});
     f.querySelector("[data-askdel]")?.addEventListener("click",()=>{keep();confirmDel=true;draw()});
     f.querySelector("[data-nodel]")?.addEventListener("click",()=>{keep();confirmDel=false;draw()});
     f.querySelector("[data-del]")?.addEventListener("click",()=>{const k=origK;state.days[k]=(state.days[k]||[]).filter(x=>x.id!==b.id);commitDay(k);close();toast("Créneau supprimé")});
     f.onsubmit=e=>{e.preventDefault();keep();
       if(b.end!=="00:00"&&toMin(b.end)<=toMin(b.start)){toast("La fin doit être après le début (00:00 = minuit).");return}
       const k=b.date||origK;
-      const nb={id:b.id||uid(),col,title:b.title.trim()||"Sans titre",start:b.start,end:b.end,note:b.note||"",done:!!b.done};if(col==="rev"&&b.ep)nb.ep=b.ep;
+      const nb={id:b.id||uid(),col,title:b.title.trim()||"Sans titre",start:b.start,end:b.end,note:b.note||"",done:!!b.done};{const es=blockEps(b);if(col==="rev"&&es.length)nb.eps=es;}
       if(!isNew&&k!==origK){state.days[origK]=(state.days[origK]||[]).filter(x=>x.id!==nb.id);saveDay(origK)}
       const list=(state.days[k]||[]).slice();
       const i=list.findIndex(x=>x.id===nb.id);if(i>=0)list[i]=nb;else list.push(nb);
       state.days[k]=list;commitDay(k);close();toast(isNew?"Créneau ajouté":"Enregistré")};
     if(isNew)setTimeout(()=>$("#b_title")?.focus(),50);
   };
-  const keep=()=>{const g=id=>document.getElementById(id);if(!g("b_title"))return;b={...b,ep:g("b_ep")?g("b_ep").value:b.ep,date:g("b_date").value||b.date,title:g("b_title").value,start:g("b_start").value,end:g("b_end").value,note:g("b_note").value,done:g("b_done")?.checked||false}};
+  const keep=()=>{const g=id=>document.getElementById(id);if(!g("b_title"))return;b={...b,date:g("b_date").value||b.date,title:g("b_title").value,start:g("b_start").value,end:g("b_end").value,note:g("b_note").value,done:g("b_done")?.checked||false}};
   const close=()=>{$("#sheetroot").innerHTML=""};
   draw();
 }
