@@ -11,7 +11,7 @@
 <meta name="theme-color" content="#0C1118" media="(prefers-color-scheme: dark)">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<link rel="icon" href="icons/icon-192.png">
+<link rel="icon" href="icon-192.png">
 <style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
 <title>Planning Eliot</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -198,6 +198,14 @@ h3{font-size:16px;font-weight:600}
 .planned{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--soft);flex-wrap:wrap}
 .planned:first-of-type{border-top:0}
 
+.tdtext{flex:1;min-width:0;text-align:left;border:0;background:none;padding:2px 0;font-size:15px;overflow-wrap:anywhere;color:var(--ink)}
+.items li.done .tdtext{text-decoration:line-through;color:var(--muted)}
+.grip{cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;color:var(--muted);font-size:20px;width:30px;height:34px;display:grid;place-items:center;border-radius:8px;flex:none}
+.grip:active{background:var(--soft)}
+.exo{transition:transform .15s ease}
+.exo.dragging{transition:none;z-index:5;position:relative;box-shadow:0 10px 28px rgba(16,24,38,.22);border-color:var(--c-sport)}
+.dsbox{border:1px solid var(--line);border-radius:14px;padding:12px;display:flex;flex-direction:column;gap:8px}
+
 /* Barre d'onglets */
 .tabs{position:fixed;left:0;right:0;bottom:0;z-index:20;background:var(--panel);border-top:1px solid var(--line);padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-top:8px;padding-bottom:calc(8px + env(safe-area-inset-bottom,0px));display:flex;justify-content:center;gap:6px}
 .tabs a{flex:1;max-width:160px;text-align:center;text-decoration:none;color:var(--muted);font-weight:600;font-size:13px;padding:8px 6px;border-radius:12px}
@@ -304,6 +312,7 @@ window.addEventListener("hashchange",render);
 
 function render(){
   const t=tab();
+  if(t==="partiels"&&typeof revEditing!=="undefined"&&revEditing)return;
   document.querySelectorAll(".tabs a").forEach(a=>a.classList.toggle("on",a.dataset.tab===t));
   $("#fab").hidden=t!=="jour"&&t!=="semaine";
   if(t==="jour")renderDay();else if(t==="taches")renderTodos();else if(t==="entrainements")renderTrain();else if(t==="semaine")renderWeek();else renderRev();
@@ -349,6 +358,7 @@ function renderDay(){
     </div></div>
   </div>
   <div class="row" style="margin-top:12px">
+    <button class="btn" data-act="datasheet">⇅ Mes données</button>
     ${blocks.length?`<button class="btn ghost" data-act="savetpl">Faire de ce jour le modèle du ${JOURS_L[d.getDay()].toLowerCase()}</button>`:""}
   </div>`;
   // place la ligne "maintenant" sous l'en-tête de colonnes
@@ -419,7 +429,7 @@ function todoLi(x,showDate){
   const when=x.due?`<span class="pill ${late?"warn":""}">${late?"En retard · ":""}${parse(x.due).getDate()} ${MOIS[parse(x.due).getMonth()].slice(0,4)}.</span>`:"";
   return `<li class="${x.done?"done":""}">
     <input type="checkbox" id="td_${x.id}" data-todo="${x.id}" ${x.done?"checked":""}>
-    <label for="td_${x.id}"><span style="color:${catColor(x.col)}">●</span> ${x.prio?"<b>!</b> ":""}${esc(x.t)}</label>
+    <button type="button" class="tdtext" data-edittodo="${x.id}"><span style="color:${catColor(x.col)}">●</span> ${x.prio?"<b>!</b> ":""}${esc(x.t)}</button>
     ${showDate?when:""}
     <button class="x" data-pin="${x.id}" aria-label="${x.day===state.sel?"Retirer de ce jour":"Mettre sur ce jour"}" title="${x.day===state.sel?"Retirer de ce jour":"Faire ce jour"}" style="color:${x.day===state.sel?"var(--accent)":"var(--muted)"}">◎</button>
     <button class="x" data-deltodo="${x.id}" aria-label="Supprimer">×</button>
@@ -452,7 +462,7 @@ function renderTodos(){
   const open=state.todos.filter(x=>!x.done).length,late=state.todos.filter(x=>!x.done&&x.due&&x.due<today).length;
   const groups=TCATS.map(c=>({c,items:l.filter(x=>(x.col||"perso")===c.k)})).filter(g=>g.items.length);
   $("#view").innerHTML=`
-  <div class="dayhead"><div><div class="eyebrow">${open} ouverte${open>1?"s":""}${late?` · ${late} en retard`:""}</div><h1>To-do</h1></div></div>
+  <div class="dayhead"><div><div class="eyebrow">${open} ouverte${open>1?"s":""}${late?` · ${late} en retard`:""}</div><h1>To-do</h1></div><button class="btn" data-act="datasheet">⇅ Mes données</button></div>
   <form class="todoform" id="todoform">
     <input class="field" id="nt_text" placeholder="Que faut-il faire ?" required>
     <div class="row">
@@ -469,6 +479,30 @@ function renderTodos(){
   ${groups.length?groups.map(g=>`<section class="ep"><h3 class="row" style="gap:8px"><i style="width:9px;height:9px;border-radius:3px;background:${catColor(g.c.k)}"></i>${g.c.n}<span class="muted mono" style="font-weight:500;font-size:13px">${g.items.length}</span></h3><ul class="items">${g.items.map(x=>todoLi(x,true)).join("")}</ul></section>`).join(""):`<p class="muted">Rien ici. ${tFilter==="faites"?"Coche des tâches pour les voir apparaître.":"Ajoute ta première tâche au-dessus."}</p>`}
   <p class="muted" style="font-size:12.5px">◎ épingle une tâche sur le jour ouvert dans l'onglet Jour.</p>`;
 }
+function openTodoSheet(id){
+  const x=state.todos.find(t=>t.id===id);if(!x)return;let confirmDel=false;
+  const draw=()=>{$("#sheetroot").innerHTML=`<div class="scrim" id="scrim"><form class="sheet" id="todosheet" role="dialog" aria-label="Modifier la tâche">
+    <div class="row" style="justify-content:space-between"><h2>Modifier la tâche</h2><button type="button" class="icon-btn" data-closets aria-label="Fermer">×</button></div>
+    <label class="lbl" for="et_text">Tâche<textarea class="field" id="et_text" rows="2" required>${esc(x.t)}</textarea></label>
+    <div class="two"><label class="lbl" for="et_col">Catégorie<select class="field" id="et_col">${TCATS.map(c=>`<option value="${c.k}" ${c.k===x.col?"selected":""}>${c.n}</option>`).join("")}</select></label>
+      <label class="lbl" for="et_due">Échéance<input class="field" type="date" id="et_due" value="${x.due||""}"></label></div>
+    <label class="lbl" for="et_day">À faire le (jour)<input class="field" type="date" id="et_day" value="${x.day||""}"></label>
+    <div class="row"><label class="row" style="gap:6px;font-weight:600"><input type="checkbox" id="et_prio" ${x.prio?"checked":""} style="width:20px;height:20px"> Prioritaire</label>
+      <label class="row" style="gap:6px;font-weight:600"><input type="checkbox" id="et_done" ${x.done?"checked":""} style="width:20px;height:20px"> Faite</label></div>
+    <div class="row" style="justify-content:space-between">
+      ${confirmDel?`<span class="row"><button type="button" class="btn danger" data-ets="del">Confirmer la suppression</button><button type="button" class="btn" data-ets="nodel">Annuler</button></span>`:`<button type="button" class="btn ghost" data-ets="askdel">Supprimer</button>`}
+      <button class="btn primary">Enregistrer</button></div>
+  </form></div>`;
+  const f=$("#todosheet"),close=()=>{$("#sheetroot").innerHTML=""};
+  $("#scrim").onclick=e=>{if(e.target.id==="scrim")close()};
+  f.querySelector("[data-closets]").onclick=close;
+  f.querySelectorAll("[data-ets]").forEach(b=>b.onclick=()=>{const a=b.dataset.ets;
+    if(a==="askdel"){confirmDel=true;draw()}if(a==="nodel"){confirmDel=false;draw()}
+    if(a==="del"){state.todos=state.todos.filter(t=>t.id!==id);saveTodos();close();render();toast("Tâche supprimée")}});
+  f.onsubmit=e=>{e.preventDefault();const v=$("#et_text").value.trim();if(!v)return;
+    editTodo(id,t=>({...t,t:v,col:$("#et_col").value,due:$("#et_due").value||null,day:$("#et_day").value||null,prio:$("#et_prio").checked?1:0,done:$("#et_done").checked}));close();toast("Tâche modifiée")};
+  };draw()}
+document.addEventListener("click",e=>{const t=e.target.closest("[data-edittodo]");if(t)openTodoSheet(t.dataset.edittodo)});
 function editTodo(id,fn){state.todos=state.todos.map(x=>x.id===id?fn(x):x);saveTodos();render()}
 document.addEventListener("click",e=>{
   const t=e.target.closest("button");if(!t)return;
@@ -609,9 +643,9 @@ function salleFields(d){
     <label class="lbl" for="sl_lieu">Lieu<input class="field" id="sl_lieu" value="${esc(s.lieu)}" placeholder="Basic-Fit Rochefort"></label></div>
   <div class="lbl">Type de séance<div class="seg">${Object.keys(ACCES).map(a=>`<button type="button" data-sacc="${a}" class="${a===s.acces?"on":""}">${a}</button>`).join("")}</div></div>
   ${ACCES[s.acces]?.length?`<div class="seg">${ACCES[s.acces].map(f=>`<button type="button" data-sfmt="${f}" class="${f===s.format?"on":""}">${f}</button>`).join("")}</div>`:""}
-  ${s.ex.map((e,i)=>{const head=e.sec&&e.sec!==lastSec?`<div class="sechead">${esc(e.sec)}</div>`:"";lastSec=e.sec;return head+`<div class="exo">
-    <div class="exhead"><span class="pill mono">${esc(e.bloc||"·")}</span>${e.role?`<span class="pill warn">${e.role}</span>`:""}<input class="field exname" id="sl_${i}_name" value="${esc(e.name)}" placeholder="${e.role?"Exercice "+e.role.toLowerCase():"Exercice"}" aria-label="Exercice">
-      ${i?`<button type="button" class="x" data-exup="${i}" aria-label="Monter">↑</button>`:""}<button type="button" class="x" data-rmex="${i}" aria-label="Retirer l'exercice">×</button></div>
+  ${s.ex.map((e,i)=>{const head=e.sec&&e.sec!==lastSec?`<div class="sechead">${esc(e.sec)}</div>`:"";lastSec=e.sec;return head+`<div class="exo" data-exi="${i}">
+    <div class="exhead"><span class="grip" data-grip="${i}" aria-label="Glisser pour déplacer" title="Maintenir et glisser">⠿</span><span class="pill mono">${esc(e.bloc||"·")}</span>${e.role?`<span class="pill warn">${e.role}</span>`:""}<input class="field exname" id="sl_${i}_name" value="${esc(e.name)}" placeholder="${e.role?"Exercice "+e.role.toLowerCase():"Exercice"}" aria-label="Exercice">
+      <button type="button" class="x" data-rmex="${i}" aria-label="Retirer l'exercice">×</button></div>
     <div class="exmeta"><input class="field mono" id="sl_${i}_scheme" value="${esc(e.scheme)}" placeholder="${e.role&&e.rep?"Reps "+e.rep:"Séries x reps (4x5)"}" aria-label="Séries et répétitions"><input class="field mono" id="sl_${i}_rest" value="${esc(e.rest)}" placeholder="Récup (3’)" aria-label="Récupération"></div>
     ${e.sets.map((st,j)=>`<div class="setrow"><span class="mono muted">S${j+1}</span><input class="field mono" id="sl_${i}_${j}_k" inputmode="decimal" value="${esc(st.k)}" placeholder="kg" aria-label="Charge série ${j+1}"><span class="muted">(</span><input class="field mono" id="sl_${i}_${j}_r" value="${esc(st.r)}" placeholder="reps" aria-label="Répétitions série ${j+1}"><span class="muted">)</span><button type="button" class="x" data-rmset="${i}|${j}" aria-label="Retirer la série">×</button></div>`).join("")}
     <div class="exfoot"><button type="button" class="btn ghost" data-addset="${i}" style="font-size:13px">+ Série</button><input class="field" id="sl_${i}_n" value="${esc(e.note)}" placeholder="Tempo, RIR, sensation…" aria-label="Note"></div>
@@ -752,12 +786,77 @@ document.addEventListener("submit",e=>{
   state.train=[...state.train,x];const q=d.queue||[];tDraft=q.length?draftFromParsed(q[0],q.slice(1),d.qTotal):null;saveTrain();render();toast(q.length?"Enregistrée, séance suivante ouverte":"Séance enregistrée");
 });
 
+/* Glisser-déposer des exercices (maintenir la poignée ⠿) */
+(function(){let drag=null;
+  document.addEventListener("pointerdown",e=>{const g=e.target.closest("[data-grip]");if(!g)return;e.preventDefault();
+    const card=g.closest(".exo"),cards=[...document.querySelectorAll("#trainform .exo")];
+    drag={from:+g.dataset.grip,card,cards,startY:e.clientY,to:+g.dataset.grip,rects:cards.map(c=>c.getBoundingClientRect())};
+    card.classList.add("dragging");g.setPointerCapture?.(e.pointerId);if(navigator.vibrate)try{navigator.vibrate(10)}catch(_){}});
+  document.addEventListener("pointermove",e=>{if(!drag)return;e.preventDefault();const dy=e.clientY-drag.startY;drag.card.style.transform=`translateY(${dy}px)`;
+    const mid=drag.rects[drag.from].top+drag.rects[drag.from].height/2+dy;let to=drag.from;
+    drag.rects.forEach((r,i)=>{if(i<drag.from&&mid<r.top+r.height/2)to=Math.min(to,i);if(i>drag.from&&mid>r.top+r.height/2)to=Math.max(to,i)});
+    drag.to=to;const h=drag.rects[drag.from].height+8;
+    drag.cards.forEach((c,i)=>{if(c===drag.card)return;let s=0;if(drag.from<to&&i>drag.from&&i<=to)s=-h;if(drag.from>to&&i<drag.from&&i>=to)s=h;c.style.transform=s?`translateY(${s}px)`:""})},{passive:false});
+  const end=()=>{if(!drag)return;const{from,to}=drag;drag.cards.forEach(c=>{c.style.transform="";c.classList.remove("dragging")});drag=null;
+    if(from!==to){keepTrain();const a=tDraft.salle.ex,[m]=a.splice(from,1);a.splice(to,0,m);render()}};
+  document.addEventListener("pointerup",end);document.addEventListener("pointercancel",end);
+})();
+
+/* ---------- Mes données : sauvegarde, transfert, Claude ---------- */
+function exportText(){
+  const data={app:"planning-eliot",v:1,exportedAt:new Date().toISOString(),days:state.days,template:state.template,rev:state.rev,todos:state.todos,train:state.train};
+  return "Données de mon appli Planning (emploi du temps, tâches, entraînements, partiels). Format : days = créneaux par date (col : sport, cours, spuc, rev, event), todos = tâches, train = séances, rev = partiels, template = semaine type.\n\n"+JSON.stringify(data);
+}
+function persistAll(){
+  if(db){Object.keys(state.days).forEach(k=>saveDay(k));saveTemplate();saveRev();saveTodos();saveTrain()}
+  else{lsSet("days",state.days);lsSet("settings/template",state.template);lsSet("revision/state",state.rev);lsSet("todos/list",{items:state.todos});lsSet("training/log",{sessions:state.train})}
+}
+const byId=(a,b)=>{const m=new Map((a||[]).map(x=>[x.id,x]));(b||[]).forEach(x=>{if(!m.has(x.id))m.set(x.id,x)});return[...m.values()]};
+function importText(txt,mode){
+  const i=txt.indexOf("{");if(i<0)throw new Error("Aucune donnée trouvée");
+  const d=JSON.parse(txt.slice(i));if(d.app!=="planning-eliot")throw new Error("Ce texte ne vient pas de l'appli Planning");
+  if(mode==="replace"){state.days=d.days||{};state.template=d.template||{days:{}};state.rev=d.rev||state.rev;state.todos=d.todos||[];state.train=d.train||[]}
+  else{
+    const days={...state.days};Object.entries(d.days||{}).forEach(([k,bl])=>{days[k]=byId(days[k],bl)});state.days=days;
+    state.todos=byId(state.todos,d.todos);state.train=byId(state.train,d.train);
+    state.rev={...state.rev,endDate:state.rev.endDate||d.rev?.endDate,epreuves:byId(state.rev.epreuves,d.rev?.epreuves).map(ep=>{const o=(d.rev?.epreuves||[]).find(x=>x.id===ep.id);return o?{...ep,date:ep.date||o.date,items:byId(ep.items,o.items)}:ep})};
+    const td={...(d.template?.days||{}),...(state.template.days||{})};state.template={...state.template,days:td};
+  }
+  persistAll();render();
+}
+function openDataSheet(){let confirmReplace=false,msg="";
+  const draw=()=>{$("#sheetroot").innerHTML=`<div class="scrim" id="scrim"><div class="sheet" role="dialog" aria-label="Mes données">
+    <div class="row" style="justify-content:space-between"><h2>Mes données</h2><button type="button" class="icon-btn" data-ds="close" aria-label="Fermer">×</button></div>
+    <section class="dsbox"><h3>Copier</h3><p class="muted" style="margin:0;font-size:13.5px">Copie tout (planning, tâches, séances, partiels). Colle-le ensuite dans une conversation avec Claude, dans une note pour sauvegarder, ou dans l'autre appareil.</p>
+      <button type="button" class="btn primary" data-ds="copy">Copier mes données</button>
+      <textarea class="field mono" id="ds_out" rows="3" readonly style="font-size:11px" hidden></textarea></section>
+    <section class="dsbox"><h3>Coller depuis l'autre appareil</h3><p class="muted" style="margin:0;font-size:13.5px">Colle ici le texte copié sur ton autre appareil. « Fusionner » ajoute ce qui manque sans rien effacer.</p>
+      <textarea class="field mono" id="ds_in" rows="4" style="font-size:11px" placeholder="Colle ici…"></textarea>
+      <div class="row"><button type="button" class="btn primary" data-ds="merge">Fusionner</button>
+        ${confirmReplace?`<button type="button" class="btn danger" data-ds="replace">Confirmer : tout remplacer</button><button type="button" class="btn" data-ds="noreplace">Annuler</button>`:`<button type="button" class="btn ghost" data-ds="askreplace">Tout remplacer…</button>`}</div>
+      ${msg?`<p style="margin:0;font-size:13.5px;font-weight:600">${esc(msg)}</p>`:""}</section>
+  </div></div>`;
+  const close=()=>{$("#sheetroot").innerHTML=""};
+  $("#scrim").onclick=e=>{if(e.target.id==="scrim")close()};
+  document.querySelectorAll("[data-ds]").forEach(b=>b.onclick=()=>{const a=b.dataset.ds,keepIn=$("#ds_in")?.value||"";
+    if(a==="close")return close();
+    if(a==="copy"){const txt=exportText(),ta=$("#ds_out");ta.value=txt;
+      const fallback=()=>{ta.hidden=false;ta.focus();ta.select();ta.setSelectionRange(0,txt.length);toast("Texte sélectionné : touche Copier")};
+      try{navigator.clipboard.writeText(txt).then(()=>toast("Données copiées"),fallback)}catch(_){fallback()}return}
+    if(a==="askreplace"){confirmReplace=true;draw();$("#ds_in").value=keepIn;return}
+    if(a==="noreplace"){confirmReplace=false;draw();$("#ds_in").value=keepIn;return}
+    if(a==="merge"||a==="replace"){if(!keepIn.trim()){msg="Colle d'abord le texte copié sur l'autre appareil.";draw();return}
+      try{importText(keepIn,a);close();toast(a==="merge"?"Données fusionnées":"Données remplacées")}
+      catch(err){msg=err.message.includes("JSON")?"Le texte collé est incomplet : recopie-le en entier.":err.message;confirmReplace=false;draw();$("#ds_in").value=keepIn}}
+  })};draw()}
+document.addEventListener("click",e=>{const t=e.target.closest('[data-act="datasheet"]');if(t)openDataSheet()});
+
 /* ---------- Partiels ---------- */
 function daysLeft(k){if(!k)return null;const t=new Date();t.setHours(0,0,0,0);return Math.round((parse(k)-t)/864e5)}
 function renderRev(){
   const r=state.rev,left=daysLeft(r.endDate);
   const mon=mondayOf(new Date());let revMin=0;for(let i=0;i<7;i++)(state.days[key(addDays(mon,i))]||[]).forEach(b=>{if(b.col==="rev")revMin+=dur(b)});
-  const eps=(r.epreuves||[]).slice().sort((a,b)=>(a.date||"9999").localeCompare(b.date||"9999"));
+  const eps=(r.epreuves||[]).slice();
   $("#view").innerHTML=`
   <div class="countdown">
     <div><div class="eyebrow">Fin des partiels</div><div class="big mono">${left==null?"—":left<0?"Fini":"J-"+left}</div></div>
@@ -852,8 +951,9 @@ document.addEventListener("click",e=>{
 $("#fab").onclick=()=>{const n=new Date(),h=Math.min(22,n.getHours()+1);openSheet({start:`${pad(h)}:00`,end:`${pad(h+1)}:00`})};
 document.addEventListener("change",e=>{
   const t=e.target;
-  if(t.id==="enddate"){state.rev={...state.rev,endDate:t.value};commitRev()}
-  if(t.dataset.epdate){editEp(t.dataset.epdate,x=>({...x,date:t.value||null}))}
+  // date : on enregistre sans redessiner pendant que le sélecteur est ouvert, puis on redessine à la sortie du champ
+  if(t.id==="enddate"){state.rev={...state.rev,endDate:t.value};saveRev();t.dataset.dirty="1"}
+  if(t.dataset.epdate){const id=t.dataset.epdate;state.rev={...state.rev,epreuves:state.rev.epreuves.map(x=>x.id===id?{...x,date:t.value||null}:x)};saveRev();t.dataset.dirty="1"}
   if(t.dataset.tick){const[ep,it]=t.dataset.tick.split("|");editEp(ep,x=>({...x,items:x.items.map(i=>i.id===it?{...i,done:t.checked}:i)}))}
 });
 document.addEventListener("submit",e=>{
@@ -861,6 +961,8 @@ document.addEventListener("submit",e=>{
   if(f.id==="addep"){e.preventDefault();const v=$("#newep").value.trim();if(!v)return;state.rev={...state.rev,epreuves:[...(state.rev.epreuves||[]),{id:uid(),name:v,date:null,items:[]}]};commitRev()}
   if(f.dataset.additem){e.preventDefault();const id=f.dataset.additem,inp=document.getElementById("add_"+id),v=inp.value.trim();if(!v)return;editEp(id,x=>({...x,items:[...(x.items||[]),{id:uid(),t:v,done:false}]}));setTimeout(()=>document.getElementById("add_"+id)?.focus(),0)}
 });
+document.addEventListener("focusout",e=>{const t=e.target;if(t.dataset&&t.dataset.dirty&&(t.dataset.epdate||t.id==="enddate")){delete t.dataset.dirty;setTimeout(render,0)}});
+let revEditing=false;document.addEventListener("focusin",e=>{revEditing=!!(e.target.dataset?.epdate||e.target.id==="enddate")});document.addEventListener("focusout",()=>{revEditing=false});
 function editEp(id,fn){state.rev={...state.rev,epreuves:state.rev.epreuves.map(x=>x.id===id?fn(x):x)};commitRev()}
 function commitRev(){saveRev();render()}
 
