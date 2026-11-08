@@ -206,6 +206,25 @@ h3{font-size:16px;font-weight:600}
 .exo.dragging{transition:none;z-index:5;position:relative;box-shadow:0 10px 28px rgba(16,24,38,.22);border-color:var(--c-sport)}
 .dsbox{border:1px solid var(--line);border-radius:14px;padding:12px;display:flex;flex-direction:column;gap:8px}
 
+.calwrap{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:12px;display:flex;flex-direction:column;gap:10px}
+.cal{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}
+.wdh{font-size:11px;text-align:center;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;padding-bottom:2px}
+.cday{min-height:72px;border:1px solid var(--line);background:var(--bg);border-radius:10px;padding:5px;display:flex;flex-direction:column;gap:2px;text-align:left;min-width:0;overflow:hidden;color:var(--ink)}
+.cday.past{opacity:.45}
+.cday.today{box-shadow:inset 0 0 0 2px var(--accent)}
+.cday.exam{border:2px solid var(--ec);background:color-mix(in srgb,var(--ec) 13%,var(--panel))}
+.cnum{font-family:var(--f-mono);font-size:11.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cmon{color:var(--muted);font-weight:500}
+.cend{font-family:var(--f-body);font-size:9.5px;font-weight:700;color:var(--c-event);text-transform:uppercase}
+.cex{font-size:10.5px;font-weight:700;line-height:1.15;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+.cdots{display:flex;flex-wrap:wrap;gap:2px;margin-top:auto}
+.cdots i{width:8px;height:8px;border-radius:2px}
+.chrs{font-family:var(--f-mono);font-size:10px;color:var(--muted)}
+.clegend{display:flex;flex-wrap:wrap;gap:6px 12px;font-size:12.5px}
+.clegend span{display:inline-flex;align-items:center;gap:5px}
+.clegend i,.epdot{width:9px;height:9px;border-radius:3px;flex:none;display:inline-block}
+@media (min-width:700px){.cday{min-height:92px;padding:7px}.cex{font-size:12px}}
+@media (max-width:420px){.cday{min-height:60px;padding:3px}.cex{font-size:9.5px}.cal{gap:3px}}
 /* Barre d'onglets */
 .tabs{position:fixed;left:0;right:0;bottom:0;z-index:20;background:var(--panel);border-top:1px solid var(--line);padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-top:8px;padding-bottom:calc(8px + env(safe-area-inset-bottom,0px));display:flex;justify-content:center;gap:6px}
 .tabs a{flex:1;max-width:160px;text-align:center;text-decoration:none;color:var(--muted);font-weight:600;font-size:13px;padding:8px 6px;border-radius:12px}
@@ -411,7 +430,7 @@ function progHTML(cols,title,opt={}){
   const rows=ks.map(k=>{const bl=(state.days[k]||[]).filter(b=>cols.includes(b.col)).sort((a,b)=>toMin(a.start)-toMin(b.start));if(!bl.length)return"";const dd=parse(k);
     return `<div class="progday ${k<today?"past":""}"><div class="d">${JOURS[dd.getDay()]}<b>${dd.getDate()}</b>${MOIS[dd.getMonth()].slice(0,4)}.</div><div class="progitems">${bl.map(b=>{
       const logged=opt.log&&state.train.some(x=>x.from===k+"_"+b.id),canLog=opt.log&&k<=today&&!/repos/i.test(b.title);
-      return `<div class="progitem"><button class="pi" data-editat="${k}|${b.id}" style="border-left-color:${CV(b.col)}"><span class="mono muted">${b.start}–${b.end}</span> <b>${esc(b.title)}</b>${b.done?' <span class="muted">✓</span>':""}</button>${canLog?(logged?`<span class="pill ok">Saisie</span>`:`<button class="btn" data-logplan="${k}|${b.id}">Saisir</button>`):""}</div>`}).join("")}</div></div>`}).join("");
+      return `<div class="progitem"><button class="pi" data-editat="${k}|${b.id}" style="border-left-color:${CV(b.col)}"><span class="mono muted">${b.start}–${b.end}</span> <b>${esc(b.title)}</b>${b.ep&&epName(b.ep)?` <span style="color:${epColor(b.ep)};font-weight:600">· ${esc(epName(b.ep))}</span>`:""}${b.done?' <span class="muted">✓</span>':""}</button>${canLog?(logged?`<span class="pill ok">Saisie</span>`:`<button class="btn" data-logplan="${k}|${b.id}">Saisir</button>`):""}</div>`}).join("")}</div></div>`}).join("");
   return `<section class="ep prog"><div class="row" style="justify-content:space-between"><h3>${title}</h3><button class="btn" data-addprog="${cols[0]}">+ Créneau</button></div>${rows||`<p class="muted" style="margin:0;font-size:13.5px">${opt.empty||"Rien de prévu sur les 3 prochaines semaines."}</p>`}</section>`}
 document.addEventListener("click",e=>{
   const t=e.target.closest("button");if(!t)return;
@@ -851,12 +870,39 @@ function openDataSheet(){let confirmReplace=false,msg="";
   })};draw()}
 document.addEventListener("click",e=>{const t=e.target.closest('[data-act="datasheet"]');if(t)openDataSheet()});
 
+/* ---------- Calendrier des partiels ---------- */
+const EPC=["#4F5BD5","#1E9E6A","#E08A00","#B03FC8","#E0456B","#0E8FA6","#8DAA00","#C2410C","#7C8796","#2563EB"];
+function sortedEps(){return(state.rev.epreuves||[]).slice().sort((a,b)=>(a.date||"9999").localeCompare(b.date||"9999"))}
+function epColor(id){const i=sortedEps().findIndex(e=>e.id===id);return i<0?"var(--c-rev)":EPC[i%EPC.length]}
+function epName(id){return(state.rev.epreuves||[]).find(e=>e.id===id)?.name||""}
+function revHoursByEp(){const o={};Object.values(state.days).forEach(bl=>(bl||[]).forEach(b=>{if(b.col!=="rev"||!b.ep)return;o[b.ep]=o[b.ep]||{plan:0,done:0};o[b.ep].plan+=dur(b);if(b.done)o[b.ep].done+=dur(b)}));return o}
+function revCalendarHTML(){
+  const eps=sortedEps(),today=key(new Date());
+  const ds=eps.map(e=>e.date).filter(Boolean).concat(state.rev.endDate?[state.rev.endDate]:[]).sort();
+  const start=mondayOf(new Date());
+  let end=addDays(mondayOf(ds.length?parse(ds[ds.length-1]):addDays(new Date(),28)),6);
+  if(end<addDays(start,27))end=addDays(start,27);
+  if(end>addDays(start,7*14-1))end=addDays(start,7*14-1);
+  let cells="";
+  for(let x=new Date(start);x<=end;x=addDays(x,1)){
+    const k=key(x),ex=eps.filter(e=>e.date===k),rb=(state.days[k]||[]).filter(b=>b.col==="rev"),mins=rb.reduce((s,b)=>s+dur(b),0);
+    const first=k===key(start)||x.getDate()===1;
+    cells+=`<button class="cday ${k<today?"past":""} ${k===today?"today":""} ${ex.length?"exam":""}" data-go="${k}" data-to="jour" ${ex.length?`style="--ec:${epColor(ex[0].id)}"`:""} aria-label="${x.getDate()} ${MOIS[x.getMonth()]}${ex.length?", "+ex.map(e=>e.name).join(", "):""}">
+      <span class="cnum">${first?`<span class="cmon">${MOIS[x.getMonth()].slice(0,4)}.</span> `:""}${x.getDate()}${state.rev.endDate===k?' <span class="cend">Fin</span>':""}</span>
+      ${ex.map(e=>`<span class="cex" style="color:${epColor(e.id)}">${esc(e.name)}</span>`).join("")}
+      ${rb.length?`<span class="cdots">${rb.map(b=>`<i style="background:${b.ep?epColor(b.ep):"var(--c-rev)"}" title="${esc(b.title)}"></i>`).join("")}</span><span class="chrs">${fmtH(mins)}</span>`:""}
+    </button>`;
+  }
+  const legend=eps.length?`<div class="clegend">${eps.map(e=>`<span><i style="background:${epColor(e.id)}"></i>${esc(e.name)}${e.date?` <span class="mono muted">${parse(e.date).getDate()}/${pad(parse(e.date).getMonth()+1)}</span>`:""}</span>`).join("")}</div>`:"";
+  return `<div class="calwrap"><div class="cal">${["lun","mar","mer","jeu","ven","sam","dim"].map(j=>`<span class="wdh">${j}</span>`).join("")}${cells}</div>${legend}
+  <p class="muted" style="margin:0;font-size:12.5px">Les carrés colorés sont tes séances de révision. Rattache chaque créneau Révisions à une épreuve (champ « Pour l'épreuve ») pour qu'il prenne sa couleur.</p></div>`}
+
 /* ---------- Partiels ---------- */
 function daysLeft(k){if(!k)return null;const t=new Date();t.setHours(0,0,0,0);return Math.round((parse(k)-t)/864e5)}
 function renderRev(){
   const r=state.rev,left=daysLeft(r.endDate);
   const mon=mondayOf(new Date());let revMin=0;for(let i=0;i<7;i++)(state.days[key(addDays(mon,i))]||[]).forEach(b=>{if(b.col==="rev")revMin+=dur(b)});
-  const eps=(r.epreuves||[]).slice();
+  const eps=sortedEps(),revH=revHoursByEp();
   $("#view").innerHTML=`
   <div class="countdown">
     <div><div class="eyebrow">Fin des partiels</div><div class="big mono">${left==null?"—":left<0?"Fini":"J-"+left}</div></div>
@@ -865,13 +911,14 @@ function renderRev(){
       <span style="font-size:13px;opacity:.8">Révisions cette semaine : <b class="mono">${fmtH(revMin)}</b></span>
     </div>
   </div>
+  <div class="section"><div class="row" style="justify-content:space-between"><h2>Calendrier des partiels</h2><span class="muted" style="font-size:12.5px">Touche un jour pour l'ouvrir</span></div>${revCalendarHTML()}</div>
   <div class="section">${progHTML(["rev"],"Ma prog de révisions")}</div>
   <div class="section">
     <div class="row" style="justify-content:space-between"><h2>Épreuves</h2></div>
     ${eps.map(ep=>{const n=(ep.items||[]).length,dn=(ep.items||[]).filter(i=>i.done).length,dl=daysLeft(ep.date);
       const pill=ep.date?`<span class="pill ${dl!=null&&dl<=7&&dl>=0?"warn":""}">${dl<0?"Passée":"J-"+dl} · ${parse(ep.date).getDate()} ${MOIS[parse(ep.date).getMonth()].slice(0,4)}.</span>`:`<span class="pill">Date à fixer</span>`;
       return `<article class="ep">
-        <div class="ephead"><div><h3>${esc(ep.name)}</h3><span class="muted" style="font-size:13px">${n?`${dn}/${n} terminés`:"Ajoute les chapitres ou étapes"}</span></div>
+        <div class="ephead"><div><h3 class="row" style="gap:8px"><i class="epdot" style="background:${epColor(ep.id)}"></i>${esc(ep.name)}</h3><span class="muted" style="font-size:13px">${n?`${dn}/${n} terminés`:"Ajoute les chapitres ou étapes"}${revH[ep.id]?` · ${fmtH(revH[ep.id].plan)} de révision prévues${revH[ep.id].done?`, ${fmtH(revH[ep.id].done)} faites`:""}`:""}</span></div>
           <div class="row">${pill}<input type="date" class="field" style="width:auto;padding:5px 8px" data-epdate="${ep.id}" value="${esc(ep.date||"")}" aria-label="Date de ${esc(ep.name)}"></div></div>
         <div class="progress"><i style="width:${n?dn/n*100:0}%"></i></div>
         <ul class="items">${(ep.items||[]).map(it=>`<li class="${it.done?"done":""}"><input type="checkbox" id="it_${it.id}" data-tick="${ep.id}|${it.id}" ${it.done?"checked":""}><label for="it_${it.id}">${esc(it.t)}</label><button class="x" data-delitem="${ep.id}|${it.id}" aria-label="Supprimer">×</button></li>`).join("")}</ul>
@@ -893,6 +940,7 @@ function openSheet(b){
       <label class="lbl" for="b_title">Intitulé<input class="field" id="b_title" required value="${esc(b.title||"")}" placeholder="Ex. Fiches physio, Muscu haut du corps…"></label>
       <label class="lbl" for="b_date">Jour<input class="field" type="date" id="b_date" value="${b.date}" required></label>
       <div class="seg" role="radiogroup" aria-label="Colonne">${COLS.map(c=>`<button type="button" data-col="${c.k}" class="${c.k===col?"on":""}"><i style="background:${CV(c.k)}"></i>${c.n}</button>`).join("")}</div>
+      ${col==="rev"&&(state.rev.epreuves||[]).length?`<label class="lbl" for="b_ep">Pour l'épreuve<select class="field" id="b_ep"><option value="">Aucune en particulier</option>${sortedEps().map(e=>`<option value="${e.id}" ${e.id===b.ep?"selected":""}>${esc(e.name)}${e.date?" · "+parse(e.date).getDate()+"/"+pad(parse(e.date).getMonth()+1):""}</option>`).join("")}</select></label>`:""}
       <div class="two"><label class="lbl" for="b_start">Début<input class="field mono" type="time" id="b_start" value="${b.start||"09:00"}" required></label><label class="lbl" for="b_end">Fin<input class="field mono" type="time" id="b_end" value="${b.end||"10:00"}" required></label></div>
       <label class="lbl" for="b_note">Note<textarea class="field" id="b_note" rows="2" placeholder="Lieu, objectif, chapitres…">${esc(b.note||"")}</textarea></label>
       ${isNew?"":`<label class="row" style="font-weight:600"><input type="checkbox" id="b_done" ${b.done?"checked":""} style="width:20px;height:20px"> Fait</label>`}
@@ -911,14 +959,14 @@ function openSheet(b){
     f.onsubmit=e=>{e.preventDefault();keep();
       if(b.end!=="00:00"&&toMin(b.end)<=toMin(b.start)){toast("La fin doit être après le début (00:00 = minuit).");return}
       const k=b.date||origK;
-      const nb={id:b.id||uid(),col,title:b.title.trim()||"Sans titre",start:b.start,end:b.end,note:b.note||"",done:!!b.done};
+      const nb={id:b.id||uid(),col,title:b.title.trim()||"Sans titre",start:b.start,end:b.end,note:b.note||"",done:!!b.done};if(col==="rev"&&b.ep)nb.ep=b.ep;
       if(!isNew&&k!==origK){state.days[origK]=(state.days[origK]||[]).filter(x=>x.id!==nb.id);saveDay(origK)}
       const list=(state.days[k]||[]).slice();
       const i=list.findIndex(x=>x.id===nb.id);if(i>=0)list[i]=nb;else list.push(nb);
       state.days[k]=list;commitDay(k);close();toast(isNew?"Créneau ajouté":"Enregistré")};
     if(isNew)setTimeout(()=>$("#b_title")?.focus(),50);
   };
-  const keep=()=>{const g=id=>document.getElementById(id);if(!g("b_title"))return;b={...b,date:g("b_date").value||b.date,title:g("b_title").value,start:g("b_start").value,end:g("b_end").value,note:g("b_note").value,done:g("b_done")?.checked||false}};
+  const keep=()=>{const g=id=>document.getElementById(id);if(!g("b_title"))return;b={...b,ep:g("b_ep")?g("b_ep").value:b.ep,date:g("b_date").value||b.date,title:g("b_title").value,start:g("b_start").value,end:g("b_end").value,note:g("b_note").value,done:g("b_done")?.checked||false}};
   const close=()=>{$("#sheetroot").innerHTML=""};
   draw();
 }
