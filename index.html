@@ -231,6 +231,7 @@ h3{font-size:16px;font-weight:600}
 .epchip .mono{font-size:11px;color:var(--muted);font-weight:500}
 .epchip.on{border-color:var(--ec);background:color-mix(in srgb,var(--ec) 18%,var(--panel))}
 .epchip.on::after{content:"✓";color:var(--ec);font-weight:800}
+.dswarn{background:var(--t-event);color:var(--ink);border-radius:10px;padding:10px 12px;font-size:13.5px}
 /* Barre d'onglets */
 .tabs{position:fixed;left:0;right:0;bottom:0;z-index:20;background:var(--panel);border-top:1px solid var(--line);padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-top:8px;padding-bottom:calc(8px + env(safe-area-inset-bottom,0px));display:flex;justify-content:center;gap:6px}
 .tabs a{flex:1;max-width:160px;text-align:center;text-decoration:none;color:var(--muted);font-weight:600;font-size:13px;padding:8px 6px;border-radius:12px}
@@ -298,6 +299,7 @@ function lsGet(k,f){try{const v=localStorage.getItem("pl_"+k);return v?JSON.pars
 function lsSet(k,v){try{localStorage.setItem("pl_"+k,JSON.stringify(v))}catch(e){}}
 const queue={};
 function save(path,data){
+  if(!importing){const t=Date.now();state.lastEdit=t;lsSet("meta",{lastEdit:t})}
   if(db){
     const run=async()=>{try{await db.doc(path).set(data)}catch(e){toast("Enregistrement impossible, réessaie.")}};
     queue[path]=(queue[path]||Promise.resolve()).then(run);
@@ -311,7 +313,7 @@ function saveTodos(){save("todos/list",{items:state.todos});if(!db)lsSet("todos/
 
 async function boot(){
   // Rendu immédiat avec ce que ce navigateur connaît déjà
-  state.days=lsGet("days",{});state.template=lsGet("settings/template",state.template);state.rev=lsGet("revision/state",state.rev);state.todos=lsGet("todos/list",{items:[]}).items||[];state.train=lsGet("training/log",{sessions:[]}).sessions||[];
+  state.days=lsGet("days",{});state.template=lsGet("settings/template",state.template);state.rev=lsGet("revision/state",state.rev);state.todos=lsGet("todos/list",{items:[]}).items||[];state.train=lsGet("training/log",{sessions:[]}).sessions||[];state.lastEdit=lsGet("meta",{}).lastEdit||0;
   render();
   db=window.claude?.use?await window.claude.use("db"):null;
   if(!db){setStatus("Données gardées sur cet appareil");return}
@@ -829,7 +831,7 @@ document.addEventListener("submit",e=>{
 
 /* ---------- Mes données : sauvegarde, transfert, Claude ---------- */
 function exportText(){
-  const data={app:"planning-eliot",v:1,exportedAt:new Date().toISOString(),days:state.days,template:state.template,rev:state.rev,todos:state.todos,train:state.train};
+  const data={app:"planning-eliot",v:2,exportedAt:new Date().toISOString(),lastEdit:state.lastEdit||Date.now(),days:state.days,template:state.template,rev:state.rev,todos:state.todos,train:state.train};
   return "Données de mon appli Planning (emploi du temps, tâches, entraînements, partiels). Format : days = créneaux par date (col : sport, cours, spuc, rev, event), todos = tâches, train = séances, rev = partiels, template = semaine type.\n\n"+JSON.stringify(data);
 }
 function persistAll(){
@@ -847,33 +849,44 @@ function importText(txt,mode){
     state.rev={...state.rev,endDate:state.rev.endDate||d.rev?.endDate,epreuves:byId(state.rev.epreuves,d.rev?.epreuves).map(ep=>{const o=(d.rev?.epreuves||[]).find(x=>x.id===ep.id);return o?{...ep,date:ep.date||o.date,items:byId(ep.items,o.items)}:ep})};
     const td={...(d.template?.days||{}),...(state.template.days||{})};state.template={...state.template,days:td};
   }
-  persistAll();render();
+  importing=true;try{persistAll()}finally{importing=false}
+  state.lastEdit=d.lastEdit||Date.parse(d.exportedAt)||Date.now();lsSet("meta",{lastEdit:state.lastEdit});render();
 }
-function openDataSheet(){let confirmReplace=false,msg="";
-  const draw=()=>{$("#sheetroot").innerHTML=`<div class="scrim" id="scrim"><div class="sheet" role="dialog" aria-label="Mes données">
+let importing=false;
+const fmtStamp=t=>{if(!t)return"jamais";const d=new Date(t);return`${JOURS_L[d.getDay()].toLowerCase()} ${d.getDate()} ${MOIS[d.getMonth()]} à ${pad(d.getHours())}h${pad(d.getMinutes())}`};
+function peekImport(txt){const i=txt.indexOf("{");if(i<0)return null;try{const d=JSON.parse(txt.slice(i));return d.app==="planning-eliot"?d:null}catch(e){return null}}
+function openDataSheet(){let warn=null,msg="";
+  const draw=(keepIn="")=>{$("#sheetroot").innerHTML=`<div class="scrim" id="scrim"><div class="sheet" role="dialog" aria-label="Mes données">
     <div class="row" style="justify-content:space-between"><h2>Mes données</h2><button type="button" class="icon-btn" data-ds="close" aria-label="Fermer">×</button></div>
-    <section class="dsbox"><h3>Copier</h3><p class="muted" style="margin:0;font-size:13.5px">Copie tout (planning, tâches, séances, partiels). Colle-le ensuite dans une conversation avec Claude, dans une note pour sauvegarder, ou dans l'autre appareil.</p>
+    <p class="muted" style="margin:0;font-size:13px">Dernière modification sur cet appareil : <b>${fmtStamp(state.lastEdit)}</b></p>
+    <section class="dsbox"><h3>1. Sur l'appareil où tu as travaillé</h3><p class="muted" style="margin:0;font-size:13.5px">Copie tout, puis envoie-le sur l'autre appareil (AirDrop, Notes, message à toi-même). Ça sert aussi pour Claude ou comme sauvegarde.</p>
       <button type="button" class="btn primary" data-ds="copy">Copier mes données</button>
       <textarea class="field mono" id="ds_out" rows="3" readonly style="font-size:11px" hidden></textarea></section>
-    <section class="dsbox"><h3>Coller depuis l'autre appareil</h3><p class="muted" style="margin:0;font-size:13.5px">Colle ici le texte copié sur ton autre appareil. « Fusionner » ajoute ce qui manque sans rien effacer.</p>
+    <section class="dsbox"><h3>2. Sur l'autre appareil</h3><p class="muted" style="margin:0;font-size:13.5px">Colle le texte puis touche « Mettre à jour ». Cet appareil devient une copie exacte : ajouts, modifications et suppressions compris.</p>
       <textarea class="field mono" id="ds_in" rows="4" style="font-size:11px" placeholder="Colle ici…"></textarea>
-      <div class="row"><button type="button" class="btn primary" data-ds="merge">Fusionner</button>
-        ${confirmReplace?`<button type="button" class="btn danger" data-ds="replace">Confirmer : tout remplacer</button><button type="button" class="btn" data-ds="noreplace">Annuler</button>`:`<button type="button" class="btn ghost" data-ds="askreplace">Tout remplacer…</button>`}</div>
+      ${warn?`<div class="dswarn">Cet appareil a été modifié <b>${fmtStamp(warn.local)}</b>, après la copie collée (<b>${fmtStamp(warn.incoming)}</b>). Ces modifs récentes seront perdues.<div class="row" style="margin-top:8px"><button type="button" class="btn danger" data-ds="force">Mettre à jour quand même</button><button type="button" class="btn" data-ds="cancel">Annuler</button></div></div>`
+        :`<div class="row"><button type="button" class="btn primary" data-ds="replace">Mettre à jour cet appareil</button><button type="button" class="btn ghost" data-ds="merge">Ajouter seulement ce qui manque</button></div>`}
       ${msg?`<p style="margin:0;font-size:13.5px;font-weight:600">${esc(msg)}</p>`:""}</section>
   </div></div>`;
-  const close=()=>{$("#sheetroot").innerHTML=""};
+  if(keepIn)$("#ds_in").value=keepIn;
   $("#scrim").onclick=e=>{if(e.target.id==="scrim")close()};
-  document.querySelectorAll("[data-ds]").forEach(b=>b.onclick=()=>{const a=b.dataset.ds,keepIn=$("#ds_in")?.value||"";
+  document.querySelectorAll("[data-ds]").forEach(b=>b.onclick=()=>act(b.dataset.ds))};
+  const close=()=>{$("#sheetroot").innerHTML=""};
+  const run=(txt,mode)=>{try{importText(txt,mode);close();toast(mode==="merge"?"Éléments manquants ajoutés":"Appareil mis à jour")}catch(err){msg=err.message.includes("JSON")?"Le texte collé est incomplet : recopie-le en entier.":err.message;warn=null;draw(txt)}};
+  const act=a=>{const txt=$("#ds_in")?.value||"";
     if(a==="close")return close();
-    if(a==="copy"){const txt=exportText(),ta=$("#ds_out");ta.value=txt;
-      const fallback=()=>{ta.hidden=false;ta.focus();ta.select();ta.setSelectionRange(0,txt.length);toast("Texte sélectionné : touche Copier")};
-      try{navigator.clipboard.writeText(txt).then(()=>toast("Données copiées"),fallback)}catch(_){fallback()}return}
-    if(a==="askreplace"){confirmReplace=true;draw();$("#ds_in").value=keepIn;return}
-    if(a==="noreplace"){confirmReplace=false;draw();$("#ds_in").value=keepIn;return}
-    if(a==="merge"||a==="replace"){if(!keepIn.trim()){msg="Colle d'abord le texte copié sur l'autre appareil.";draw();return}
-      try{importText(keepIn,a);close();toast(a==="merge"?"Données fusionnées":"Données remplacées")}
-      catch(err){msg=err.message.includes("JSON")?"Le texte collé est incomplet : recopie-le en entier.":err.message;confirmReplace=false;draw();$("#ds_in").value=keepIn}}
-  })};draw()}
+    if(a==="copy"){const out=exportText(),ta=$("#ds_out");ta.value=out;
+      const fallback=()=>{ta.hidden=false;ta.focus();ta.select();ta.setSelectionRange(0,out.length);toast("Texte sélectionné : touche Copier")};
+      try{navigator.clipboard.writeText(out).then(()=>toast("Données copiées"),fallback)}catch(_){fallback()}return}
+    if(a==="cancel"){warn=null;draw(txt);return}
+    if(!txt.trim()){msg="Colle d'abord le texte copié sur l'autre appareil.";draw();return}
+    if(a==="merge")return run(txt,"merge");
+    if(a==="force")return run(txt,"replace");
+    if(a==="replace"){const d=peekImport(txt);if(!d){msg="Ce texte ne vient pas de l'appli Planning, ou il est incomplet.";draw(txt);return}
+      const incoming=d.lastEdit||Date.parse(d.exportedAt)||0;
+      if(state.lastEdit&&incoming&&state.lastEdit>incoming+1000){warn={local:state.lastEdit,incoming};msg="";draw(txt);return}
+      run(txt,"replace")}};
+  draw()}
 document.addEventListener("click",e=>{const t=e.target.closest('[data-act="datasheet"]');if(t)openDataSheet()});
 
 /* ---------- Calendrier des partiels ---------- */
