@@ -304,7 +304,9 @@ function save(path,data){
     const run=async()=>{try{await db.doc(path).set(data)}catch(e){toast("Enregistrement impossible, réessaie.")}};
     queue[path]=(queue[path]||Promise.resolve()).then(run);
   }else{lsSet(path,data)}
+  cloudTouch();
 }
+function cloudTouch(){if(window._cloud)window._cloud.touch()}
 function saveDay(k){save("days/"+k,{blocks:state.days[k]||[]})}
 function saveTemplate(){save("settings/template",state.template)}
 function saveRev(){save("revision/state",state.rev)}
@@ -316,7 +318,7 @@ async function boot(){
   state.days=lsGet("days",{});state.template=lsGet("settings/template",state.template);state.rev=lsGet("revision/state",state.rev);state.todos=lsGet("todos/list",{items:[]}).items||[];state.train=lsGet("training/log",{sessions:[]}).sessions||[];state.lastEdit=lsGet("meta",{}).lastEdit||0;
   render();
   db=window.claude?.use?await window.claude.use("db"):null;
-  if(!db){setStatus("Données gardées sur cet appareil");return}
+  if(!db){setStatus("Données gardées sur cet appareil");window._cloud=cloud;cloud.start();return}
   let loaded=false;const timer=setTimeout(()=>{if(!loaded)setStatus("Synchro lente…")},10000);
   db.collection("days").onSnapshot(s=>{
     const d={};s.docs.forEach(x=>{d[x.id]=(x.data().blocks||[])});state.days=d;
@@ -331,7 +333,7 @@ async function boot(){
 let statusText="";function setStatus(t){statusText=t;const el=$("#status");if(el)el.textContent=t}
 if(!window.claude)window.addEventListener("load",()=>{});
 // lsSet miroir pour le mode hors base
-function mirror(){if(!db){lsSet("days",state.days)}}
+function mirror(){if(!db){lsSet("days",state.days)}cloudTouch()}
 
 /* ---------- Routage ---------- */
 function tab(){const h=location.hash.slice(1);return["jour","taches","entrainements","semaine","partiels"].includes(h)?h:"jour"}
@@ -837,6 +839,7 @@ function exportText(){
 function persistAll(){
   if(db){Object.keys(state.days).forEach(k=>saveDay(k));saveTemplate();saveRev();saveTodos();saveTrain()}
   else{lsSet("days",state.days);lsSet("settings/template",state.template);lsSet("revision/state",state.rev);lsSet("todos/list",{items:state.todos});lsSet("training/log",{sessions:state.train})}
+  cloudTouch();
 }
 const byId=(a,b)=>{const m=new Map((a||[]).map(x=>[x.id,x]));(b||[]).forEach(x=>{if(!m.has(x.id))m.set(x.id,x)});return[...m.values()]};
 function importText(txt,mode){
@@ -855,18 +858,34 @@ function importText(txt,mode){
 let importing=false;
 const fmtStamp=t=>{if(!t)return"jamais";const d=new Date(t);return`${JOURS_L[d.getDay()].toLowerCase()} ${d.getDate()} ${MOIS[d.getMonth()]} à ${pad(d.getHours())}h${pad(d.getMinutes())}`};
 function peekImport(txt){const i=txt.indexOf("{");if(i<0)return null;try{const d=JSON.parse(txt.slice(i));return d.app==="planning-eliot"?d:null}catch(e){return null}}
-function openDataSheet(){let warn=null,msg="";
+let acMsg="",acBusy=false,acOut=false;
+function accountHTML(){
+  const st=`<p class="muted" id="cloudst" style="margin:0;font-size:13px">${esc(cloud.status)}</p>`;
+  if(cloud.avail==="nodb")return `<section class="dsbox"><h3>Compte et synchro</h3><p class="muted" style="margin:0;font-size:13.5px">Le serveur est en ligne mais la base de données n'est pas encore reliée (Cloudflare › Settings › Bindings › D1, nom <b>DB</b>, puis redéployer).</p></section>`;
+  if(cloud.avail!==true)return `<section class="dsbox"><h3>Compte et synchro</h3><p class="muted" style="margin:0;font-size:13.5px">La synchro automatique marche depuis l'adresse Cloudflare de l'appli (…pages.dev). Ici, les données restent sur cet appareil.</p></section>`;
+  if(cloud.on)return `<section class="dsbox"><h3>Compte et synchro</h3><p style="margin:0;font-size:14px">Connecté : <b>${esc(cloud.email)}</b></p>${st}
+    <p class="muted" style="margin:0;font-size:13px">Tout se synchronise tout seul dès qu'il y a du réseau. Sans réseau, l'appli marche normalement et envoie tes modifs au retour de la connexion.</p>
+    <div class="row">${acOut?`<button type="button" class="btn danger" data-ds="logout">Confirmer la déconnexion</button><span class="muted" style="font-size:12.5px">Tes données restent sur cet appareil.</span>`:`<button type="button" class="btn ghost" data-ds="logout">Se déconnecter</button>`}</div></section>`;
+  return `<section class="dsbox"><h3>Compte et synchro</h3><p class="muted" style="margin:0;font-size:13.5px">Avec ton compte, tout se synchronise automatiquement entre ton iPhone et ton iPad.</p>
+    <input class="field" id="ac_mail" type="email" autocomplete="username" inputmode="email" autocapitalize="off" placeholder="Adresse e-mail" aria-label="Adresse e-mail">
+    <input class="field" id="ac_pw" type="password" autocomplete="current-password" placeholder="Mot de passe (8 caractères min.)" aria-label="Mot de passe">
+    <div class="row"><button type="button" class="btn primary" data-ds="register" ${acBusy?"disabled":""}>Créer mon compte</button><button type="button" class="btn" data-ds="login" ${acBusy?"disabled":""}>Se connecter</button></div>
+    ${acMsg?`<p style="margin:0;font-size:13.5px;font-weight:600">${esc(acMsg)}</p>`:""}
+    <p class="muted" style="margin:0;font-size:12.5px">Crée le compte sur l'appareil qui a tes données les plus à jour. Sur l'autre, « Se connecter » remplace son contenu par celui du compte.</p></section>`}
+function openDataSheet(){let warn=null,msg="";acMsg="";acOut=false;
   const draw=(keepIn="")=>{$("#sheetroot").innerHTML=`<div class="scrim" id="scrim"><div class="sheet" role="dialog" aria-label="Mes données">
     <div class="row" style="justify-content:space-between"><h2>Mes données</h2><button type="button" class="icon-btn" data-ds="close" aria-label="Fermer">×</button></div>
-    <p class="muted" style="margin:0;font-size:13px">Dernière modification sur cet appareil : <b>${fmtStamp(state.lastEdit)}</b></p>
-    <section class="dsbox"><h3>1. Sur l'appareil où tu as travaillé</h3><p class="muted" style="margin:0;font-size:13.5px">Copie tout, puis envoie-le sur l'autre appareil (AirDrop, Notes, message à toi-même). Ça sert aussi pour Claude ou comme sauvegarde.</p>
-      <button type="button" class="btn primary" data-ds="copy">Copier mes données</button>
+    ${accountHTML()}
+    <section class="dsbox"><h3>Copier pour Claude</h3><p class="muted" style="margin:0;font-size:13.5px">Copie tout ton planning pour le coller dans une conversation avec Claude, ou dans une note comme sauvegarde.</p>
+      <button type="button" class="btn ${cloud.on?"primary":""}" data-ds="copy">Copier mes données</button>
       <textarea class="field mono" id="ds_out" rows="3" readonly style="font-size:11px" hidden></textarea></section>
-    <section class="dsbox"><h3>2. Sur l'autre appareil</h3><p class="muted" style="margin:0;font-size:13.5px">Colle le texte puis touche « Mettre à jour ». Cet appareil devient une copie exacte : ajouts, modifications et suppressions compris.</p>
+    <details class="dsbox" ${cloud.on?"":"open"}><summary style="font-weight:600;cursor:pointer">${cloud.on?"Transfert manuel (secours)":"Transfert manuel entre appareils"}</summary>
+    <p class="muted" style="margin:0;font-size:13px">Dernière modification sur cet appareil : <b>${fmtStamp(state.lastEdit)}</b></p>
+    <p class="muted" style="margin:0;font-size:13.5px">Sur l'appareil où tu as travaillé, touche « Copier mes données » et envoie le texte sur celui-ci (AirDrop, Notes).</p><p class="muted" style="margin:0;font-size:13.5px">Colle le texte puis touche « Mettre à jour ». Cet appareil devient une copie exacte : ajouts, modifications et suppressions compris.</p>
       <textarea class="field mono" id="ds_in" rows="4" style="font-size:11px" placeholder="Colle ici…"></textarea>
       ${warn?`<div class="dswarn">Cet appareil a été modifié <b>${fmtStamp(warn.local)}</b>, après la copie collée (<b>${fmtStamp(warn.incoming)}</b>). Ces modifs récentes seront perdues.<div class="row" style="margin-top:8px"><button type="button" class="btn danger" data-ds="force">Mettre à jour quand même</button><button type="button" class="btn" data-ds="cancel">Annuler</button></div></div>`
         :`<div class="row"><button type="button" class="btn primary" data-ds="replace">Mettre à jour cet appareil</button><button type="button" class="btn ghost" data-ds="merge">Ajouter seulement ce qui manque</button></div>`}
-      ${msg?`<p style="margin:0;font-size:13.5px;font-weight:600">${esc(msg)}</p>`:""}</section>
+      ${msg?`<p style="margin:0;font-size:13.5px;font-weight:600">${esc(msg)}</p>`:""}</details>
   </div></div>`;
   if(keepIn)$("#ds_in").value=keepIn;
   $("#scrim").onclick=e=>{if(e.target.id==="scrim")close()};
@@ -875,6 +894,11 @@ function openDataSheet(){let warn=null,msg="";
   const run=(txt,mode)=>{try{importText(txt,mode);close();toast(mode==="merge"?"Éléments manquants ajoutés":"Appareil mis à jour")}catch(err){msg=err.message.includes("JSON")?"Le texte collé est incomplet : recopie-le en entier.":err.message;warn=null;draw(txt)}};
   const act=a=>{const txt=$("#ds_in")?.value||"";
     if(a==="close")return close();
+    if(a==="login"||a==="register"){const em=$("#ac_mail").value.trim(),pw=$("#ac_pw").value;acMsg="";acBusy=true;draw(txt);$("#ac_mail").value=em;$("#ac_pw").value=pw;
+      cloud.login(em,pw,a==="register").then(()=>{acBusy=false;close();toast(a==="register"?"Compte créé, tes données partent en ligne":"Connecté, tes données arrivent")},
+        err=>{acBusy=false;acMsg=err.message==="Failed to fetch"?"Pas de réseau : réessaie quand tu es connecté.":err.message;draw(txt);const m=$("#ac_mail"),w=$("#ac_pw");if(m)m.value=em;if(w)w.value=pw})
+      return}
+    if(a==="logout"){if(!acOut){acOut=true;draw(txt);return}acOut=false;cloud.logout().then(()=>{draw(txt);toast("Déconnecté")});return}
     if(a==="copy"){const out=exportText(),ta=$("#ds_out");ta.value=out;
       const fallback=()=>{ta.hidden=false;ta.focus();ta.select();ta.setSelectionRange(0,out.length);toast("Texte sélectionné : touche Copier")};
       try{navigator.clipboard.writeText(out).then(()=>toast("Données copiées"),fallback)}catch(_){fallback()}return}
@@ -1037,6 +1061,105 @@ function editEp(id,fn){state.rev={...state.rev,epreuves:state.rev.epreuves.map(x
 function commitRev(){saveRev();render()}
 
 let tt;function toast(m){document.querySelector(".toast")?.remove();const d=document.createElement("div");d.className="toast";d.textContent=m;d.setAttribute("role","status");document.body.appendChild(d);clearTimeout(tt);tt=setTimeout(()=>d.remove(),2200)}
+
+
+/* ---------- Compte en ligne : synchronisation automatique entre appareils ---------- */
+// Les données sont découpées en éléments (un jour, une tâche, une séance, une épreuve…).
+// Chaque modification est datée ; en cas de conflit, la plus récente gagne, élément par élément.
+const cloud=(()=>{
+  const S=Object.assign({tok:null,email:null,cursor:0,rec:{},dirty:{},fresh:false,lastSync:0},lsGet("cloud",{}));
+  let avail=null,busy=false,again=false,timer=null,fails=0,pending=null,status="";
+  const persist=()=>lsSet("cloud",S);
+  const ITEMS=[["todo:","todos"],["train:","train"]];
+  function recordsFromState(){
+    const out={},ord={};
+    for(const k in S.rec){if(/^(todo|train|ep):/.test(k)){try{ord[k]=JSON.parse(S.rec[k]).o}catch(e){}}}
+    let base=Date.now()*100;const o=k=>ord[k]??(ord[k]=base++);
+    Object.entries(state.days||{}).forEach(([d,bl])=>{out["day:"+d]=JSON.stringify(bl||[])});
+    out["tpl"]=JSON.stringify(state.template||{days:{}});
+    const {epreuves,...meta}=state.rev||{};out["revmeta"]=JSON.stringify(meta);
+    (epreuves||[]).forEach(e=>{const k="ep:"+e.id;out[k]=JSON.stringify({o:o(k),d:e})});
+    (state.todos||[]).forEach(x=>{const k="todo:"+x.id;out[k]=JSON.stringify({o:o(k),d:x})});
+    (state.train||[]).forEach(x=>{const k="train:"+x.id;out[k]=JSON.stringify({o:o(k),d:x})});
+    return out}
+  function stateFromRecords(){
+    const days={},lists={todo:[],train:[],ep:[]};let tpl={days:{}},meta={endDate:"2026-12-15"};
+    for(const k in S.rec){const v=JSON.parse(S.rec[k]),i=k.indexOf(":"),p=i<0?k:k.slice(0,i);
+      if(p==="day")days[k.slice(4)]=v;else if(k==="tpl")tpl=v;else if(k==="revmeta")meta=v;else if(lists[p])lists[p].push(v)}
+    const srt=a=>a.sort((x,y)=>x.o-y.o).map(x=>x.d);
+    state.days=days;state.template=tpl;state.rev={...meta,epreuves:srt(lists.ep)};state.todos=srt(lists.todo);state.train=srt(lists.train);
+    importing=true;try{lsSet("days",state.days);lsSet("settings/template",state.template);lsSet("revision/state",state.rev);lsSet("todos/list",{items:state.todos});lsSet("training/log",{sessions:state.train})}finally{importing=false}}
+  // repère ce qui a changé dans l'appli depuis la dernière fois
+  function touch(){
+    if(!S.tok||S.fresh)return;
+    const now=recordsFromState(),t=Date.now();let n=0;
+    for(const k in now)if(now[k]!==S.rec[k]){S.rec[k]=now[k];S.dirty[k]={v:now[k],t};n++}
+    for(const k in S.rec)if(!(k in now)){delete S.rec[k];S.dirty[k]={v:null,t};n++}
+    if(n){persist();soon(900)}}
+  // n'applique les nouveautés venues d'un autre appareil que quand on n'est pas en train d'écrire
+  const typing=()=>{const a=document.activeElement;return !!($("#sheetroot")?.children.length||tDraft||revEditing||(a&&/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)))};
+  function applyPending(force){
+    if(!pending)return;if(!force&&typing()){setTimeout(applyPending,1500);return}
+    const inc=pending;pending=null;
+    if(S.fresh){S.rec={};S.dirty={}}else touch();
+    let ch=false;
+    for(const c of inc){const d=S.dirty[c.k];if(d&&d.t>c.t)continue;
+      if(c.v===null){if(c.k in S.rec){delete S.rec[c.k];ch=true}}else if(S.rec[c.k]!==c.v){S.rec[c.k]=c.v;ch=true}}
+    if(S.fresh){S.fresh=false;if(!Object.keys(S.rec).length){persist();touch();return}ch=true}
+    persist();if(ch){stateFromRecords();state.lastEdit=Date.now();lsSet("meta",{lastEdit:state.lastEdit});render()}
+    if(Object.keys(S.dirty).length)soon(500)}
+  function setSt(t){status=t;if(!db)setStatus(t);const el=document.getElementById("cloudst");if(el)el.textContent=t}
+  async function api(body,keepalive){
+    const r=await fetch("api",{method:"POST",headers:{"content-type":"application/json",...(S.tok?{authorization:"Bearer "+S.tok}:{})},body:JSON.stringify(body),keepalive:!!keepalive,cache:"no-store"});
+    let j={};try{j=await r.json()}catch(e){}
+    if(!r.ok){const e=new Error(j.error||"Serveur injoignable");e.status=r.status;throw e}return j}
+  async function sync(){
+    if(!S.tok||!avail)return;if(busy){again=true;return}
+    busy=true;clearTimeout(timer);
+    try{
+      if(!navigator.onLine)throw new Error("offline");
+      if(!S.fresh&&!pending)touch();
+      do{
+        const ks=Object.keys(S.dirty).slice(0,250),changes=ks.map(k=>({k,v:S.dirty[k].v,t:S.dirty[k].t}));
+        if(!S.fresh&&changes.length)setSt("Synchronisation…");
+        const r=await api({a:"sync",since:S.cursor,changes:S.fresh?[]:changes});
+        if(!S.fresh)ks.forEach((k,i)=>{if(S.dirty[k]&&S.dirty[k].t===changes[i].t)delete S.dirty[k]});
+        S.cursor=r.cursor;persist();
+        if(r.changes.length){pending=(pending||[]).concat(r.changes)}else if(S.fresh){S.fresh=false;persist();touch()}
+        applyPending();
+      }while(!S.fresh&&Object.keys(S.dirty).length&&!pending);
+      fails=0;S.lastSync=Date.now();persist();setSt("Synchronisé · "+pad(new Date().getHours())+"h"+pad(new Date().getMinutes()));
+    }catch(e){
+      if(e.status===401){S.tok=null;persist();setSt("Déconnecté : reconnecte-toi dans ⇅ Mes données")}
+      else{fails++;setSt(Object.keys(S.dirty).length?"Hors ligne · tes modifs partiront dès le retour du réseau":"Hors ligne · synchro dès le retour du réseau")}
+    }finally{busy=false;if(again){again=false;soon(300)}else if(S.tok)soon(fails?Math.min(60000,4000*2**Math.min(fails,4)):20000)}}
+  function soon(ms){clearTimeout(timer);timer=setTimeout(()=>{if(document.visibilityState!=="hidden")sync();else soon(ms)},ms)}
+  async function probe(){
+    if(db||location.protocol==="file:"){avail=false;return false}
+    try{const r=await fetch("api",{cache:"no-store"});const j=await r.json();avail=!!(r.ok&&j.ok);if(avail&&!j.db)avail="nodb"}catch(e){avail=false}
+    return avail}
+  async function start(){
+    await probe();
+    if(avail!==true){if(avail==="nodb")setSt("Serveur prêt, base pas encore reliée");return}
+    if(S.tok){setSt(S.fresh?"Récupération de tes données…":"Synchronisation…");sync()}
+    else{setSt("Pas encore de compte : ⇅ Mes données");if(!lsGet("cloudAsked",false)){lsSet("cloudAsked",true);setTimeout(()=>{if(!$("#sheetroot").children.length)openDataSheet()},600)}}
+    addEventListener("online",()=>soon(200));
+    document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")soon(200);else flush()});
+    addEventListener("pagehide",flush)}
+  function flush(){ // envoie les dernières modifs quand l'appli passe en arrière-plan
+    if(!S.tok||!avail||S.fresh||busy)return;touch();
+    const ks=Object.keys(S.dirty);if(!ks.length)return;
+    const changes=ks.map(k=>({k,v:S.dirty[k].v,t:S.dirty[k].t}));const body=JSON.stringify(changes);if(body.length>60000)return;
+    api({a:"sync",since:S.cursor,changes},true).catch(()=>{})}
+  async function login(email,password,create){
+    const r=await api({a:create?"register":"login",email,password});
+    lsSet("backup_before_login",JSON.parse(exportText().slice(exportText().indexOf("{"))));
+    Object.assign(S,{tok:r.tok,email:r.email,cursor:0,rec:{},dirty:{},fresh:!create,lastSync:0});persist();
+    if(create)touch();
+    await sync();applyPending(true);return r}
+  async function logout(){try{await api({a:"logout"})}catch(e){}Object.assign(S,{tok:null,email:null,cursor:0,rec:{},dirty:{},fresh:false});persist();setSt("Déconnecté · données gardées sur cet appareil")}
+  return{touch,start,sync,login,logout,get on(){return !!S.tok},get email(){return S.email},get avail(){return avail},get status(){return status},get pendingN(){return Object.keys(S.dirty).length}};
+})();
 
 boot();
 </script>
